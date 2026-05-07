@@ -56,10 +56,13 @@ func TestReport_CountersUpdate(t *testing.T) {
 	}
 }
 
-func TestReport_LessThan100_AlwaysLogs(t *testing.T) {
+func TestReport_LessThan100_LogsOnPercentChange(t *testing.T) {
 	buf, restore := captureLog(t)
 	defer restore()
 
+	// 5 files total: each file is 20%, so percent changes at each file
+	// file 1: 20%, file 2: 40%, file 3: 60%, file 4: 80%, file 5: 100%
+	// All cross a percent boundary → 5 logs
 	r := NewReporter(5)
 
 	for i := 0; i < 5; i++ {
@@ -68,7 +71,7 @@ func TestReport_LessThan100_AlwaysLogs(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 5 {
-		t.Errorf("expected 5 log lines (one per file), got %d", len(lines))
+		t.Errorf("expected 5 log lines (percent changes at each file), got %d", len(lines))
 	}
 }
 
@@ -94,7 +97,7 @@ func TestReport_GreaterOrEqual100_NoLogWithinSamePercent(t *testing.T) {
 
 	r := NewReporter(1000)
 
-	// Process 10 files = 1% of 1000
+	// Process 10 files = 1% of 1000 → log at file 10 (1% boundary)
 	for i := 0; i < 10; i++ {
 		r.Report(true, 100)
 	}
@@ -114,6 +117,28 @@ func TestReport_GreaterOrEqual100_NoLogWithinSamePercent(t *testing.T) {
 	lines = strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 1 {
 		t.Errorf("expected 1 log line at 2%%, got %d", len(lines))
+	}
+}
+
+func TestReport_LogsEvery100Files(t *testing.T) {
+	buf, restore := captureLog(t)
+	defer restore()
+
+	// 50000 files: 1% = 500 files. But every 100 files also triggers.
+	// So in the first 500 files, we get logs at: 100, 200, 300, 400, 500
+	// file 100: 0% (100*100/50000=0), but 100%100==0 → log
+	// file 200: 0%, but 200%100==0 → log
+	// file 500: 1% boundary → log
+	r := NewReporter(50000)
+
+	for i := 0; i < 500; i++ {
+		r.Report(true, 10)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	// Logs at file 100, 200, 300, 400, 500 = 5 lines
+	if len(lines) != 5 {
+		t.Errorf("expected 5 log lines (every 100 files), got %d", len(lines))
 	}
 }
 

@@ -22,9 +22,9 @@ func NewReporter(totalFiles int) *Reporter {
 	}
 }
 
-// Report 在处理完一个文件后调用，更新统计并在达到 1% 步长时输出进度。
+// Report 在处理完一个文件后调用，更新统计并按阈值输出进度。
 // uploaded 表示该文件是否成功上传，size 为上传的字节数。
-// 如果总文件数 < 100，则每个文件都输出进度。
+// 输出策略：每跨越 1% 或每处理 100 个文件输出一次（取先到者）。
 func (r *Reporter) Report(uploaded bool, size int64) {
 	r.processedFiles++
 	if uploaded {
@@ -38,16 +38,13 @@ func (r *Reporter) Report(uploaded bool, size int64) {
 
 	currentPercent := r.processedFiles * 100 / r.totalFiles
 
-	if r.totalFiles < 100 {
-		// 总文件数 < 100 时，每处理一个文件都输出进度
+	// 每跨越 1% 或每 100 个文件输出一次
+	percentCrossed := currentPercent > r.lastPercent
+	hundredCrossed := r.processedFiles%100 == 0
+
+	if percentCrossed || hundredCrossed {
 		r.logProgress(currentPercent)
 		r.lastPercent = currentPercent
-	} else {
-		// 总文件数 >= 100 时，仅在百分比跨越 1% 边界时输出
-		if currentPercent > r.lastPercent {
-			r.logProgress(currentPercent)
-			r.lastPercent = currentPercent
-		}
 	}
 }
 
