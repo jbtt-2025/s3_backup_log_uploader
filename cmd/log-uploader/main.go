@@ -117,8 +117,6 @@ func processFile(
 	reporter *progress.Reporter,
 	failWriter *faillog.Writer,
 ) {
-	slog.Info("发现文件", "path", entry.AbsPath, "size", entry.Size, "compressed", entry.IsCompressed)
-
 	var uploadFilePath string
 	var uploadFileName string
 	var uploadSize int64
@@ -126,10 +124,9 @@ func processFile(
 
 	// a. 判断是否需要压缩
 	if !entry.IsCompressed {
-		slog.Info("压缩开始", "path", entry.AbsPath)
 		result, err := compressor.Compress(entry.AbsPath)
 		if err != nil {
-			slog.Error("压缩失败", "path", entry.AbsPath, "error", err)
+			slog.Debug("压缩失败", "path", entry.AbsPath, "error", err)
 			stats.FilesFailed++
 			stats.FilesProcessed++
 			reporter.Report(false, 0)
@@ -152,7 +149,7 @@ func processFile(
 	// c. 去重检查
 	exists, err := uploaderClient.Exists(ctx, key)
 	if err != nil {
-		slog.Error("去重检查失败", "key", key, "error", err)
+		slog.Debug("去重检查失败", "key", key, "error", err)
 		stats.FilesFailed++
 		stats.FilesProcessed++
 		if err := failWriter.Record(key); err != nil {
@@ -166,7 +163,7 @@ func processFile(
 	}
 
 	if exists {
-		slog.Info("上传跳过（已存在）", "key", key)
+		slog.Debug("上传跳过（已存在）", "key", key)
 		stats.FilesSkipped++
 		stats.FilesProcessed++
 		if needCleanup {
@@ -177,10 +174,9 @@ func processFile(
 	}
 
 	// d. 上传
-	slog.Info("上传开始", "key", key, "size", uploadSize)
 	err = uploaderClient.Upload(ctx, key, uploadFilePath)
 	if err != nil {
-		slog.Error("上传失败", "key", key, "error", err)
+		slog.Debug("上传失败", "key", key, "error", err)
 		stats.FilesFailed++
 		stats.FilesProcessed++
 		if err := failWriter.Record(key); err != nil {
@@ -193,7 +189,7 @@ func processFile(
 		return
 	}
 
-	slog.Info("上传完成", "key", key, "size", uploadSize)
+	slog.Debug("上传完成", "key", key, "size", uploadSize)
 	stats.FilesUploaded++
 	stats.BytesUploaded += uploadSize
 	stats.FilesProcessed++
@@ -208,7 +204,6 @@ func processFile(
 }
 
 func cleanupArchive(archivePath string) {
-	slog.Info("清理临时归档", "path", archivePath)
 	if err := cleaner.Cleanup(archivePath); err != nil {
 		slog.Warn("清理临时归档失败", "path", archivePath, "error", err)
 	}

@@ -35,11 +35,12 @@ go build -o log-uploader ./cmd/log-uploader
 
 ## 使用方式
 
-创建一个 bash 脚本（如 `run_backup.sh`）：
+创建一个 bash 脚本（如 `s3_run_backup.sh`）：
 
 ```bash
 #!/bin/bash
 
+# ========== 配置区 ==========
 export AK="your-access-key-id"
 export SK="your-secret-access-key"
 export ENDPOINT="https://abc123def.r2.cloudflarestorage.com/log-backup"
@@ -47,19 +48,47 @@ export BASE_DIR="logs"
 export LOG_DICT="/var/log/nginx;/var/log/app;/var/log/syslog"
 export IGNORE_DAYS="30"
 
-./log-uploader
+# ========== 自动下载并运行 ==========
+REPO="jbtt-2025/s3_backup_log_uploader"
+BIN="/tmp/log-uploader"
+
+# 检测系统和架构
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64)  ARCH="amd64" ;;
+  aarch64) ARCH="arm64" ;;
+  i386|i686) ARCH="i386" ;;
+esac
+
+SUFFIX="${OS}-${ARCH}"
+TARBALL="log-uploader-${SUFFIX}.tar.gz"
+
+# 获取最新 release 下载地址
+DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${TARBALL}"
+
+# 下载、解压、重命名、清理
+echo "下载 ${DOWNLOAD_URL} ..."
+curl -fSL -o "/tmp/${TARBALL}" "$DOWNLOAD_URL" || { echo "下载失败"; exit 1; }
+tar -xzf "/tmp/${TARBALL}" -C /tmp
+rm -f "/tmp/${TARBALL}"
+mv "/tmp/log-uploader-${SUFFIX}" "$BIN"
+chmod +x "$BIN"
+
+# 运行
+"$BIN"
 ```
 
 ```bash
-chmod +x run_backup.sh
-./run_backup.sh
+chmod +x s3_run_backup.sh
+./s3_run_backup.sh
 ```
 
 ### 配合 cron 定时执行
 
 ```bash
 # 每天凌晨 3 点执行
-0 3 * * * /opt/log-uploader/run_backup.sh >> /var/log/log-uploader.log 2>&1
+0 3 * * * /opt/run_backup.sh >> /var/log/log-uploader.log 2>&1
 ```
 
 ## 上传路径格式
