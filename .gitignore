@@ -1,7 +1,7 @@
-# Binaries
-log-uploader
-log-uploader.exe
-*.exe
+# Binaries (root level only, not cmd/log-uploader/ directory)
+/log-uploader
+/log-uploader.exe
+/log-uploader-*
 *.exe~
 *.dll
 *.so
