@@ -6,13 +6,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"log-uploader/internal/cleaner"
 	"log-uploader/internal/compressor"
 	"log-uploader/internal/config"
 	"log-uploader/internal/faillog"
-	"log-uploader/internal/interfaces"
 	"log-uploader/internal/pathbuilder"
 	"log-uploader/internal/progress"
 	"log-uploader/internal/scanner"
@@ -28,6 +29,16 @@ func (r *realEnvReader) Getenv(key string) string { return os.Getenv(key) }
 type realOSHost struct{}
 
 func (r *realOSHost) Hostname() (string, error) { return os.Hostname() }
+
+// atomicStats 使用原子操作的统计计数器（线程安全）
+type atomicStats struct {
+	dirsProcessed  atomic.Int64
+	filesUploaded  atomic.Int64
+	filesSkipped   atomic.Int64
+	filesFailed    atomic.Int64
+	bytesUploaded  atomic.Int64
+	totalFiles     int
+}
 
 func main() {
 	os.Exit(run())
@@ -55,7 +66,7 @@ func run() int {
 	}
 
 	// 4. 扫描所有日志目录
-	var stats interfaces.Stats
+	var stats atomicStats
 	var allEntries []scanner.FileEntry
 	atLeastOneDirSuccess := false
 
@@ -67,7 +78,7 @@ func run() int {
 			continue
 		}
 		atLeastOneDirSuccess = true
-		stats.DirsProcessed++
+		stats.dirsProcessed.Add(1)
 		slog.Info("目录扫描完成", "dir", dir, "files", len(entries))
 		allEntries = append(allEntries, entries...)
 	}
@@ -78,31 +89,57 @@ func run() int {
 		return 1
 	}
 
-	stats.TotalFiles = len(allEntries)
+	stats.totalFiles = len(allEntries)
 
 	// 6. 创建进度报告器
-	reporter := progress.NewReporter(stats.TotalFiles)
+	reporter := progress.NewReporter(stats.totalFiles)
 
 	// 7. 创建失败日志写入器
 	failWriter := faillog.NewWriter()
 	defer failWriter.Close()
 
-	// 8. 逐文件处理
+	// 8. 并发处理文件
 	ctx := context.Background()
+	workers := cfg.Workers
 
-	for _, entry := range allEntries {
-		processFile(ctx, cfg, uploaderClient, entry, &stats, reporter, failWriter)
+	slog.Info("开始处理文件", "totalFiles", stats.totalFiles, "workers", workers)
+
+	if workers <= 1 {
+		// 串行处理
+		for _, entry := range allEntries {
+			processFile(ctx, cfg, uploaderClient, entry, &stats, reporter, failWriter)
+		}
+	} else {
+		// 并发处理：worker pool
+		jobs := make(chan scanner.FileEntry, workers*2)
+		var wg sync.WaitGroup
+
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for entry := range jobs {
+					processFile(ctx, cfg, uploaderClient, entry, &stats, reporter, failWriter)
+				}
+			}()
+		}
+
+		for _, entry := range allEntries {
+			jobs <- entry
+		}
+		close(jobs)
+		wg.Wait()
 	}
 
 	// 9. 输出汇总日志
 	slog.Info("处理完毕",
-		"dirsProcessed", stats.DirsProcessed,
-		"totalFiles", stats.TotalFiles,
-		"filesUploaded", stats.FilesUploaded,
-		"filesSkipped", stats.FilesSkipped,
-		"filesFailed", stats.FilesFailed,
-		"bytesUploaded", stats.BytesUploaded,
-		"bytesUploadedHuman", progress.FormatSize(stats.BytesUploaded),
+		"dirsProcessed", stats.dirsProcessed.Load(),
+		"totalFiles", stats.totalFiles,
+		"filesUploaded", stats.filesUploaded.Load(),
+		"filesSkipped", stats.filesSkipped.Load(),
+		"filesFailed", stats.filesFailed.Load(),
+		"bytesUploaded", stats.bytesUploaded.Load(),
+		"bytesUploadedHuman", progress.FormatSize(stats.bytesUploaded.Load()),
 	)
 
 	return 0
@@ -113,7 +150,7 @@ func processFile(
 	cfg *config.Config,
 	uploaderClient *uploader.Client,
 	entry scanner.FileEntry,
-	stats *interfaces.Stats,
+	stats *atomicStats,
 	reporter *progress.Reporter,
 	failWriter *faillog.Writer,
 ) {
@@ -127,8 +164,7 @@ func processFile(
 		result, err := compressor.Compress(entry.AbsPath)
 		if err != nil {
 			slog.Debug("压缩失败", "path", entry.AbsPath, "error", err)
-			stats.FilesFailed++
-			stats.FilesProcessed++
+			stats.filesFailed.Add(1)
 			reporter.Report(false, 0)
 			return
 		}
@@ -150,8 +186,7 @@ func processFile(
 	exists, err := uploaderClient.Exists(ctx, key)
 	if err != nil {
 		slog.Debug("去重检查失败", "key", key, "error", err)
-		stats.FilesFailed++
-		stats.FilesProcessed++
+		stats.filesFailed.Add(1)
 		if err := failWriter.Record(key); err != nil {
 			slog.Warn("记录失败日志出错", "error", err)
 		}
@@ -164,8 +199,7 @@ func processFile(
 
 	if exists {
 		slog.Debug("上传跳过（已存在）", "key", key)
-		stats.FilesSkipped++
-		stats.FilesProcessed++
+		stats.filesSkipped.Add(1)
 		if needCleanup {
 			cleanupArchive(uploadFilePath)
 		}
@@ -177,8 +211,7 @@ func processFile(
 	err = uploaderClient.Upload(ctx, key, uploadFilePath)
 	if err != nil {
 		slog.Debug("上传失败", "key", key, "error", err)
-		stats.FilesFailed++
-		stats.FilesProcessed++
+		stats.filesFailed.Add(1)
 		if err := failWriter.Record(key); err != nil {
 			slog.Warn("记录失败日志出错", "error", err)
 		}
@@ -190,9 +223,8 @@ func processFile(
 	}
 
 	slog.Debug("上传完成", "key", key, "size", uploadSize)
-	stats.FilesUploaded++
-	stats.BytesUploaded += uploadSize
-	stats.FilesProcessed++
+	stats.filesUploaded.Add(1)
+	stats.bytesUploaded.Add(uploadSize)
 
 	// e. 清理临时归档
 	if needCleanup {

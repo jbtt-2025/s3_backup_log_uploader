@@ -3,10 +3,12 @@ package progress
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 )
 
 // Reporter 跟踪处理进度并在达到阈值时输出进度信息
 type Reporter struct {
+	mu             sync.Mutex
 	totalFiles     int
 	processedFiles int
 	uploadedFiles  int
@@ -25,7 +27,11 @@ func NewReporter(totalFiles int) *Reporter {
 // Report 在处理完一个文件后调用，更新统计并按阈值输出进度。
 // uploaded 表示该文件是否成功上传，size 为上传的字节数。
 // 输出策略：每跨越 1% 或每处理 100 个文件输出一次（取先到者）。
+// 线程安全。
 func (r *Reporter) Report(uploaded bool, size int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.processedFiles++
 	if uploaded {
 		r.uploadedFiles++

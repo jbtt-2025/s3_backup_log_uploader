@@ -3,6 +3,7 @@ package faillog
 import (
 	"fmt"
 	"os"
+	"sync"
 )
 
 // FailLogPath is the default path for the failure log file.
@@ -10,7 +11,9 @@ const FailLogPath = "/tmp/S3_backup_log_update_fail.log"
 
 // Writer manages writing upload failure records to a log file.
 // The file is lazily created only when the first failure is recorded.
+// Thread-safe.
 type Writer struct {
+	mu          sync.Mutex
 	path        string
 	hasFailures bool
 	file        *os.File
@@ -31,7 +34,11 @@ func NewWriterWithPath(path string) *Writer {
 // Record records a failed S3 upload key to the failure log.
 // On the first call, the file is created (or truncated if it already exists).
 // Each call writes one line containing the s3Key.
+// Thread-safe.
 func (w *Writer) Record(s3Key string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.file == nil {
 		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
@@ -51,6 +58,9 @@ func (w *Writer) Record(s3Key string) error {
 // Close closes the file handle if it was opened.
 // If no failures were recorded, no file is created or left behind.
 func (w *Writer) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.file != nil {
 		return w.file.Close()
 	}
@@ -59,5 +69,7 @@ func (w *Writer) Close() error {
 
 // HasFailures returns whether any failures have been recorded.
 func (w *Writer) HasFailures() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.hasFailures
 }

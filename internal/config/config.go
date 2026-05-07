@@ -19,6 +19,7 @@ type Config struct {
 	LogDirs    []string // 日志目录列表
 	Hostname   string   // 机器主机名
 	IgnoreDays int      // 忽略超过指定天数未修改的文件，0 表示不忽略
+	Workers    int      // 并发上传 worker 数量，默认 1
 }
 
 // Load 从环境变量加载配置，验证必填项，获取主机名。
@@ -87,6 +88,16 @@ func Load(env interfaces.EnvReader, host interfaces.OSHost) (*Config, error) {
 		}
 	}
 
+	// Parse WORKERS (optional, default 1)
+	workersStr := env.Getenv("WORKERS")
+	workers := 1
+	if workersStr != "" {
+		workers, err = strconv.Atoi(workersStr)
+		if err != nil || workers < 1 {
+			return nil, fmt.Errorf("WORKERS must be a positive integer, got: %q", workersStr)
+		}
+	}
+
 	// Get hostname
 	hostname, err := host.Hostname()
 	if err != nil {
@@ -105,6 +116,7 @@ func Load(env interfaces.EnvReader, host interfaces.OSHost) (*Config, error) {
 		LogDirs:    logDirs,
 		Hostname:   hostname,
 		IgnoreDays: ignoreDays,
+		Workers:    workers,
 	}, nil
 }
 

@@ -32,6 +32,7 @@ go build -o log-uploader ./cmd/log-uploader
 | `BASE_DIR` | 是 | 上传路径前缀 |
 | `LOG_DICT` | 是 | 日志目录列表，分号分隔 |
 | `IGNORE_DAYS` | 否 | 忽略超过 N 天未修改的文件，默认 0（不忽略） |
+| `WORKERS` | 否 | 并发上传线程数，默认 1（串行） |
 
 ## 使用方式
 
@@ -47,6 +48,7 @@ export ENDPOINT="https://abc123def.r2.cloudflarestorage.com/log-backup"
 export BASE_DIR="logs"
 export LOG_DICT="/var/log/nginx;/var/log/app;/var/log/syslog"
 export IGNORE_DAYS="30"
+export WORKERS="8"
 
 # ========== 自动下载并运行 ==========
 REPO="jbtt-2025/s3_backup_log_uploader"
